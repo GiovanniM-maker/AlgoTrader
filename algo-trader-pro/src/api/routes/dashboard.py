@@ -460,33 +460,22 @@ async def get_market_feed() -> JSONResponse:
         except Exception:
             pass
 
-    # ---- 2. Fetch: Bybit first, CoinGecko fallback (1 call per tutti i symbol) ----
+    # ---- 2. Fetch: CoinGecko prima (funziona ovunque), Bybit per volume/change ----
+    # Bybit è bloccato (403) da alcune VM/paesi; CoinGecko pubblico funziona sempre.
     import asyncio as _asyncio
 
-    async def _get_tick(symbol: str) -> Dict[str, Any]:
+    # Prova CoinGecko per tutti (1 chiamata) — fonte primaria su server
+    cg_prices = await _fetch_coingecko_prices_all()
+    ticks = []
+    for symbol in _TRACKED_SYMBOLS:
         if symbol in engine_prices and engine_prices[symbol] > 0:
+            ticks.append(_coingecko_tick_from_price(symbol, engine_prices[symbol]))
+        elif symbol in cg_prices:
+            ticks.append(_coingecko_tick_from_price(symbol, cg_prices[symbol]))
+        else:
+            # Ultimo tentativo: Bybit (può fallire con 403 su alcune reti)
             bybit_tick = await _fetch_bybit_ticker(symbol)
-            if bybit_tick:
-                bybit_tick["price"] = round(engine_prices[symbol], 8)
-                return bybit_tick
-            return _coingecko_tick_from_price(symbol, engine_prices[symbol])
-        bybit_tick = await _fetch_bybit_ticker(symbol)
-        if bybit_tick:
-            return bybit_tick
-        return _placeholder_tick(symbol)  # Sostituito dopo con CoinGecko bulk
-
-    # Bybit in parallelo
-    results = await _asyncio.gather(*[_get_tick(sym) for sym in _TRACKED_SYMBOLS])
-    ticks = list(results)
-
-    # Fallback CoinGecko per symbol senza prezzo (1 sola chiamata API)
-    missing = [i for i, t in enumerate(ticks) if (t["price"] or 0) <= 0]
-    if missing:
-        cg_prices = await _fetch_coingecko_prices_all()
-        for i in missing:
-            sym = _TRACKED_SYMBOLS[i]
-            if sym in cg_prices:
-                ticks[i] = _coingecko_tick_from_price(sym, cg_prices[sym])
+            ticks.append(bybit_tick if bybit_tick else _placeholder_tick(symbol))
 
     return JSONResponse(content=ticks)
 
