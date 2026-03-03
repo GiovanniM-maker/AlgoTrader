@@ -662,11 +662,14 @@ class TradingEngine:
                 self.logger.warning("CoinGecko price fetch failed for %s: %s", symbol, exc)
                 return
 
-            # Align to the current candle bucket (timeframe in minutes)
-            try:
-                _tf_minutes = int(self.timeframe)
-            except (ValueError, TypeError):
-                _tf_minutes = 60
+            # Align to the current candle bucket (timeframe: "5","15","60","240" or "D")
+            _tf_map = {"5": 5, "15": 15, "60": 60, "240": 240, "D": 1440}
+            _tf_minutes = _tf_map.get(str(self.timeframe))
+            if _tf_minutes is None:
+                try:
+                    _tf_minutes = int(self.timeframe)
+                except (ValueError, TypeError):
+                    _tf_minutes = 60
             now_ms = int(_time.time() * 1000)
             candle_open_time = now_ms - (now_ms % (_tf_minutes * 60 * 1000))
 
@@ -893,7 +896,10 @@ class TradingEngine:
                         price = await self.coingecko_rest.fetch_current_price(symbol)
                         self.current_prices[symbol] = price
                     except Exception as exc:
-                        self.logger.debug("Price fetch failed for %s: %s", symbol, exc)
+                        self.logger.warning(
+                            "Price fetch failed for %s: %s — prezzi dashboard non aggiornati",
+                            symbol, exc,
+                        )
 
             current_prices_map = dict(self.current_prices)
 

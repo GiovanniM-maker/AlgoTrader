@@ -102,11 +102,15 @@ fi
 echo "   Pulizia cache Docker..."
 (docker system prune -af 2>/dev/null || sudo docker system prune -af 2>/dev/null) || true
 
-# Avvia con Docker (sudo necessario su VM GCP)
-echo "   Avvio container..."
+# Prepara directory e permessi (database deve essere scrivibile dal container)
+echo "   Preparazione directory..."
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 mkdir -p database/ohlcv_cache src/ml/models logs results
+touch database/algotrader.db 2>/dev/null || true
 chmod -R 777 database logs results src/ml/models 2>/dev/null || true
+
+# Avvia con Docker (sudo necessario su VM GCP)
+echo "   Avvio container..."
 sudo docker compose -f docker/docker-compose.yml up -d --build 2>/dev/null || sudo docker-compose -f docker/docker-compose.yml up -d --build 2>/dev/null || true
 
 echo ""

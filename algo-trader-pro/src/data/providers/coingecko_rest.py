@@ -87,7 +87,8 @@ TIMEFRAME_SECONDS: Dict[str, int] = {
 MAX_RETRIES = 3
 BASE_BACKOFF_S = 2.0        # seconds
 RATE_LIMIT_SLEEP_S = 6.5    # ~9 req/min to stay well under 30 req/min
-CACHE_TTL_S = 300           # cache GET responses for 5 minutes
+CACHE_TTL_S = 300           # cache GET responses for 5 minutes (OHLCV, market_chart)
+PRICE_CACHE_TTL_S = 30      # cache prezzi spot solo 30s per dashboard real-time
 
 
 # ---------------------------------------------------------------------------
@@ -122,8 +123,8 @@ class CoinGeckoRestProvider(BaseProvider):
         if self._session is None or self._session.closed:
             timeout = aiohttp.ClientTimeout(total=30)
             headers = {"Accept": "application/json"}
+            # Senza base_url per evitare problemi aiohttp su alcune versioni
             self._session = aiohttp.ClientSession(
-                base_url=BASE_URL,
                 headers=headers,
                 timeout=timeout,
             )
@@ -167,11 +168,17 @@ class CoinGeckoRestProvider(BaseProvider):
         if elapsed < RATE_LIMIT_SLEEP_S:
             await asyncio.sleep(RATE_LIMIT_SLEEP_S - elapsed)
 
-    async def _get(self, path: str, params: Optional[Dict[str, Any]] = None) -> Any:
+    async def _get(
+        self,
+        path: str,
+        params: Optional[Dict[str, Any]] = None,
+        cache_ttl: Optional[float] = None,
+    ) -> Any:
         """
         Perform a GET request with retry + exponential back-off.
 
         Returns parsed JSON (list or dict).
+        cache_ttl: override default cache TTL (seconds). None = use CACHE_TTL_S.
         """
         if self._session is None:
             raise RuntimeError("Provider is not connected. Call await connect() first.")
@@ -179,18 +186,22 @@ class CoinGeckoRestProvider(BaseProvider):
         # Build full URL string for cache key
         param_str = "&".join(f"{k}={v}" for k, v in sorted((params or {}).items()))
         cache_key = f"{path}?{param_str}"
+        ttl = cache_ttl if cache_ttl is not None else CACHE_TTL_S
 
         cached = self._get_cache(cache_key)
         if cached is not None:
             logger.debug("Cache HIT: %s", cache_key)
             return cached
 
+        # URL completo (evita problemi base_url su aiohttp)
+        url = f"{BASE_URL.rstrip('/')}/{path.lstrip('/')}" if not path.startswith("http") else path
+
         last_error: Exception = RuntimeError("Unknown error")
         for attempt in range(1, MAX_RETRIES + 1):
             await self._throttle()
             try:
-                logger.debug("GET %s %s (attempt %d)", path, params, attempt)
-                async with self._session.get(path, params=params) as resp:
+                logger.debug("GET %s %s (attempt %d)", url, params, attempt)
+                async with self._session.get(url, params=params) as resp:
                     self._last_request_ts = time.monotonic()
 
                     if resp.status == 429:
@@ -201,7 +212,7 @@ class CoinGeckoRestProvider(BaseProvider):
 
                     if resp.status == 200:
                         data = await resp.json(content_type=None)
-                        self._set_cache(cache_key, data)
+                        self._set_cache(cache_key, data, ttl=ttl)
                         return data
 
                     body = await resp.text()
@@ -321,7 +332,7 @@ class CoinGeckoRestProvider(BaseProvider):
             # /ohlc endpoint – best for short, accurate OHLCV (no volume though)
             days_param = _nearest_ohlc_days(needed_days)
             raw = await self._get(
-                f"/coins/{coin_id}/ohlc",
+                f"coins/{coin_id}/ohlc",
                 params={"vs_currency": self.vs_currency, "days": days_param},
             )
             df = self._ohlc_response_to_df(raw, timeframe)
@@ -330,7 +341,7 @@ class CoinGeckoRestProvider(BaseProvider):
             from_ts = start_ms // 1000
             to_ts   = now_ms // 1000
             raw = await self._get(
-                f"/coins/{coin_id}/market_chart/range",
+                f"coins/{coin_id}/market_chart/range",
                 params={
                     "vs_currency": self.vs_currency,
                     "from": from_ts,
@@ -350,11 +361,13 @@ class CoinGeckoRestProvider(BaseProvider):
     async def fetch_current_price(self, symbol: str) -> float:
         """
         Return latest price from /simple/price.
+        Cache 30s per dashboard real-time (non 5 min).
         """
         coin_id = self._symbol_to_id(symbol)
         data = await self._get(
-            "/simple/price",
+            "simple/price",
             params={"ids": coin_id, "vs_currencies": self.vs_currency},
+            cache_ttl=PRICE_CACHE_TTL_S,
         )
         try:
             return float(data[coin_id][self.vs_currency])
