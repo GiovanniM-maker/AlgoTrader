@@ -1457,7 +1457,7 @@
       // Auto-refresh
       setInterval(loadSummary, 5000);
       setInterval(loadPositions, 10000);  // Posizioni aperte ogni 10s
-      setInterval(loadMarketFeed, 15000);
+      setInterval(loadMarketFeed, 10000);  // Market feed ogni 10s (Bybit/CoinGecko)
       setInterval(() => {
         if (!equityCustomMode) loadEquityCurve(currentEquityHours);
       }, 15000);  // Equity: refresh ogni 15s (mark-to-market posizioni aperte)

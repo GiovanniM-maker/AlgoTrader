@@ -320,10 +320,57 @@ async def get_dashboard_summary() -> JSONResponse:
 # ---------------------------------------------------------------------------
 
 _BYBIT_TICKER_URL = "https://api.bybit.com/v5/market/tickers"
+_COINGECKO_PRICE_URL = "https://api.coingecko.com/api/v3/simple/price"
 _TRACKED_SYMBOLS: List[str] = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"]
 
-# Timeout for Bybit REST calls (seconds)
+# Symbol → CoinGecko ID
+_SYMBOL_TO_COINGECKO: Dict[str, str] = {
+    "BTCUSDT": "bitcoin",
+    "ETHUSDT": "ethereum",
+    "SOLUSDT": "solana",
+    "BNBUSDT": "binancecoin",
+}
+
+# Timeout for REST calls (seconds)
 _BYBIT_TIMEOUT = 5.0
+_COINGECKO_TIMEOUT = 10.0
+
+
+async def _fetch_coingecko_prices_all() -> Dict[str, float]:
+    """
+    Fetch current prices for all tracked symbols in one CoinGecko call.
+    Fallback when Bybit is unreachable (e.g. VM senza connessione).
+    """
+    ids = ",".join(_SYMBOL_TO_COINGECKO.values())
+    try:
+        async with httpx.AsyncClient(timeout=_COINGECKO_TIMEOUT) as client:
+            resp = await client.get(
+                _COINGECKO_PRICE_URL,
+                params={"ids": ids, "vs_currencies": "usd"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            result: Dict[str, float] = {}
+            for symbol, coin_id in _SYMBOL_TO_COINGECKO.items():
+                price = float(data.get(coin_id, {}).get("usd", 0))
+                if price > 0:
+                    result[symbol] = price
+            return result
+    except Exception as exc:
+        logger.warning("CoinGecko bulk price fetch failed: %s", exc)
+        return {}
+
+
+def _coingecko_tick_from_price(symbol: str, price: float) -> Dict[str, Any]:
+    """Build tick dict from CoinGecko price (no 24h change/volume)."""
+    return {
+        "symbol": symbol,
+        "price": round(price, 8),
+        "change_24h_pct": 0.0,
+        "volume_24h": 0.0,
+        "high_24h": price,
+        "low_24h": price,
+    }
 
 
 async def _fetch_bybit_ticker(symbol: str) -> Optional[Dict[str, Any]]:
@@ -413,32 +460,33 @@ async def get_market_feed() -> JSONResponse:
         except Exception:
             pass
 
-    # ---- 2. Fetch from Bybit for each symbol ----
+    # ---- 2. Fetch: Bybit first, CoinGecko fallback (1 call per tutti i symbol) ----
     import asyncio as _asyncio
 
     async def _get_tick(symbol: str) -> Dict[str, Any]:
         if symbol in engine_prices and engine_prices[symbol] > 0:
-            # Engine has a live price; still return a minimal tick.
-            # We still need volume/high/low, so fetch from Bybit unless it fails.
             bybit_tick = await _fetch_bybit_ticker(symbol)
             if bybit_tick:
-                # Override price with the engine's more recent value
                 bybit_tick["price"] = round(engine_prices[symbol], 8)
                 return bybit_tick
-            return {
-                "symbol": symbol,
-                "price": round(engine_prices[symbol], 8),
-                "change_24h_pct": 0.0,
-                "volume_24h": 0.0,
-                "high_24h": engine_prices[symbol],
-                "low_24h": engine_prices[symbol],
-            }
+            return _coingecko_tick_from_price(symbol, engine_prices[symbol])
         bybit_tick = await _fetch_bybit_ticker(symbol)
-        return bybit_tick if bybit_tick else _placeholder_tick(symbol)
+        if bybit_tick:
+            return bybit_tick
+        return _placeholder_tick(symbol)  # Sostituito dopo con CoinGecko bulk
 
-    # Run all ticker fetches concurrently
+    # Bybit in parallelo
     results = await _asyncio.gather(*[_get_tick(sym) for sym in _TRACKED_SYMBOLS])
     ticks = list(results)
+
+    # Fallback CoinGecko per symbol senza prezzo (1 sola chiamata API)
+    missing = [i for i, t in enumerate(ticks) if (t["price"] or 0) <= 0]
+    if missing:
+        cg_prices = await _fetch_coingecko_prices_all()
+        for i in missing:
+            sym = _TRACKED_SYMBOLS[i]
+            if sym in cg_prices:
+                ticks[i] = _coingecko_tick_from_price(sym, cg_prices[sym])
 
     return JSONResponse(content=ticks)
 
