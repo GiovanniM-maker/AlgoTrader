@@ -1,0 +1,248 @@
+# =============================================================================
+# AlgoTrader Pro — Docker Compose
+# =============================================================================
+# Profili disponibili:
+#   default  → app + SQLite (dev/test)
+#   postgres → app + PostgreSQL (prod)
+#
+# Uso:
+#   docker compose up -d                     # SQLite (semplice)
+#   docker compose --profile postgres up -d  # PostgreSQL (prod)
+#   docker compose run --rm app python scripts/download_historical.py
+#   docker compose run --rm app python scripts/train_models.py
+#   docker compose run --rm app python scripts/run_backtest.py --report
+# =============================================================================
+
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Volumes
+# ─────────────────────────────────────────────────────────────────────────────
+volumes:
+  ohlcv_cache:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ../database/ohlcv_cache
+
+  ml_models:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ../src/ml/models
+
+  db_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ../database
+
+  logs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ../logs
+
+  results:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ../results
+
+  postgres_data:
+    driver: local
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Networks
+# ─────────────────────────────────────────────────────────────────────────────
+networks:
+  algo_net:
+    driver: bridge
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Services
+# ─────────────────────────────────────────────────────────────────────────────
+services:
+
+  # ───────────────────────────────────────────────────────────────
+  # App principale — AlgoTrader Pro bot + API + dashboard
+  # ───────────────────────────────────────────────────────────────
+  app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: runtime
+    image: algotrader-pro:latest
+    container_name: algotrader_app
+    restart: unless-stopped
+
+    # Override comando per mostrare log dettagliati in dev
+    command: >
+      python scripts/start_bot.py
+      --host 0.0.0.0
+      --port 8000
+      --no-browser
+
+    ports:
+      - "${PORT:-8000}:8000"
+
+    environment:
+      # App
+      APP_ENV: ${APP_ENV:-paper}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PYTHONUNBUFFERED: "1"
+      PYTHONPATH: /app
+
+      # Provider
+      DATA_PROVIDER: ${DATA_PROVIDER:-coingecko}
+
+      # Bybit
+      BYBIT_API_KEY: ${BYBIT_API_KEY:-}
+      BYBIT_API_SECRET: ${BYBIT_API_SECRET:-}
+      BYBIT_TESTNET: ${BYBIT_TESTNET:-false}
+
+      # Sentiment
+      CRYPTOPANIC_API_KEY: ${CRYPTOPANIC_API_KEY:-}
+      CRYPTOPANIC_BASE_URL: ${CRYPTOPANIC_BASE_URL:-https://cryptopanic.com/api/developer/v2}
+      COINGECKO_API_KEY: ${COINGECKO_API_KEY:-}
+      GOOGLE_TRENDS_ENABLED: ${GOOGLE_TRENDS_ENABLED:-true}
+
+      # Database (SQLite default, PostgreSQL se profile attivo)
+      DATABASE_URL: ${DATABASE_URL:-sqlite:///./database/algotrader.db}
+
+      # Security
+      SECRET_KEY: ${SECRET_KEY:-change_this_in_production_please}
+
+      # Telegram (opzionale)
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+
+    volumes:
+      - ohlcv_cache:/app/database/ohlcv_cache
+      - ml_models:/app/src/ml/models
+      - db_data:/app/database
+      - logs:/app/logs
+      - results:/app/results
+      # Mount config per modifiche senza rebuild
+      - ../config:/app/config:ro
+      # Mount .env
+      - ../.env:/app/.env:ro
+
+    networks:
+      - algo_net
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+    # Risorse (opzionale — rimuovi se non hai Docker Desktop con limiti)
+    # deploy:
+    #   resources:
+    #     limits:
+    #       memory: 4G
+    #       cpus: "2.0"
+
+
+  # ───────────────────────────────────────────────────────────────
+  # PostgreSQL (profilo "postgres" — produzione)
+  # Usa: docker compose --profile postgres up -d
+  # ───────────────────────────────────────────────────────────────
+  postgres:
+    profiles: ["postgres"]
+    image: postgres:16-alpine
+    container_name: algotrader_postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-algotrader}
+      POSTGRES_USER: ${POSTGRES_USER:-algotrader}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_in_production}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=en_US.UTF-8 --lc-ctype=en_US.UTF-8"
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Schema iniziale
+      - ../database/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+
+    networks:
+      - algo_net
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-algotrader} -d ${POSTGRES_DB:-algotrader}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+
+  # ───────────────────────────────────────────────────────────────
+  # pgAdmin (profilo "postgres" + "admin" — interfaccia DB)
+  # Usa: docker compose --profile postgres --profile admin up -d
+  # ───────────────────────────────────────────────────────────────
+  pgadmin:
+    profiles: ["postgres", "admin"]
+    image: dpage/pgadmin4:latest
+    container_name: algotrader_pgadmin
+    restart: unless-stopped
+
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@algotrader.local}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+      PGADMIN_LISTEN_PORT: 5050
+
+    ports:
+      - "${PGADMIN_PORT:-5050}:5050"
+
+    networks:
+      - algo_net
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "2"
+
+
+  # ───────────────────────────────────────────────────────────────
+  # Watchtower — auto-update immagine in produzione (opzionale)
+  # Riabilita decommentando il blocco
+  # ───────────────────────────────────────────────────────────────
+  # watchtower:
+  #   profiles: ["prod"]
+  #   image: containrrr/watchtower
+  #   container_name: algotrader_watchtower
+  #   restart: unless-stopped
+  #   volumes:
+  #     - /var/run/docker.sock:/var/run/docker.sock
+  #   environment:
+  #     WATCHTOWER_CLEANUP: "true"
+  #     WATCHTOWER_POLL_INTERVAL: 3600  # 1 ora
+  #   command: algotrader_app

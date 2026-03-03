@@ -1,0 +1,198 @@
+# =============================================================================
+# AlgoTrader Pro — .gitignore
+# IMPORTANTE: NON committare mai .env, modelli ML, o dati di trading
+# =============================================================================
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SECRETS — MAI nel repository
+# ─────────────────────────────────────────────────────────────────────────────
+.env
+.env.local
+.env.production
+.env.staging
+*.key
+*.pem
+*.p12
+secrets/
+credentials/
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Database (dati reali/paper trading)
+# ─────────────────────────────────────────────────────────────────────────────
+data/*.db
+database/*.db
+database/*.db-shm
+database/*.db-wal
+database/*.sqlite
+database/*.sqlite3
+database/ohlcv_cache/
+!database/.gitkeep
+!database/schema.sql
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Modelli ML (troppo grandi per git, usare DVC o S3)
+# ─────────────────────────────────────────────────────────────────────────────
+src/ml/models/
+!src/ml/models/.gitkeep
+*.pkl
+*.joblib
+*.pt
+*.pth
+*.onnx
+*.h5
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Cache e dati temporanei
+# ─────────────────────────────────────────────────────────────────────────────
+*.parquet
+*.feather
+*.arrow
+cache/
+.cache/
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Log
+# ─────────────────────────────────────────────────────────────────────────────
+logs/
+*.log
+*.log.*
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Report backtest (generati localmente)
+# ─────────────────────────────────────────────────────────────────────────────
+results/
+!results/.gitkeep
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Python
+# ─────────────────────────────────────────────────────────────────────────────
+# Build artifacts
+dist/
+build/
+*.egg-info/
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+env/
+.env/
+ENV/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage
+.tox/
+.nox/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+htmlcov/
+nosetests.xml
+
+# Type checking
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+
+# Jupyter
+.ipynb_checkpoints
+*.ipynb
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# IDEs
+# ─────────────────────────────────────────────────────────────────────────────
+# VS Code
+.vscode/
+*.code-workspace
+
+# PyCharm
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Vim/Emacs
+*.swp
+*.swo
+*~
+\#*\#
+.#*
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OS
+# ─────────────────────────────────────────────────────────────────────────────
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+Icon?
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# Linux
+*~
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Docker
+# ─────────────────────────────────────────────────────────────────────────────
+# Non ignorare i file docker, ma ignora i volumi locali
+docker/data/
+docker/pgdata/
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Documentazione generata
+# ─────────────────────────────────────────────────────────────────────────────
+docs/_build/
+docs/.doctrees/
+site/
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Google Cloud SDK (installare separatamente: https://cloud.google.com/sdk/docs/install)
+# ─────────────────────────────────────────────────────────────────────────────
+google-cloud-sdk/
+google-cloud-cli*.tar.gz
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Misc
+# ─────────────────────────────────────────────────────────────────────────────
+*.bak
+*.tmp
+*.temp
+*.orig
+.sass-cache/
+node_modules/

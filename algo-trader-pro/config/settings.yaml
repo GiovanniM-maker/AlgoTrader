@@ -1,0 +1,468 @@
+# =============================================================================
+# AlgoTrader Pro - Master Configuration
+# =============================================================================
+
+app:
+  name: "AlgoTrader Pro"
+  version: "1.0.0"
+  environment: "paper"          # paper | live
+  log_level: "INFO"             # DEBUG | INFO | WARNING | ERROR | CRITICAL
+  timezone: "UTC"
+  debug: false
+
+# =============================================================================
+# Database
+# =============================================================================
+database:
+  url: "sqlite:///./database/algotrader.db"
+  echo: false                   # Set true to log all SQL statements
+  pool_size: 5
+  max_overflow: 10
+
+# =============================================================================
+# Data Providers
+# =============================================================================
+data_providers:
+  coingecko:
+    base_url: "https://api.coingecko.com/api/v3"
+    symbols:
+      - bitcoin
+      - ethereum
+      - solana
+      - binancecoin
+    vs_currency: "usd"
+    rate_limit_calls: 10        # calls per minute (free tier)
+    rate_limit_window: 60       # seconds
+    retry_attempts: 3
+    retry_backoff_factor: 2.0
+    timeout: 30
+
+  cryptopanic:
+    base_url: "https://cryptopanic.com/api/developer/v2"
+    filter: "hot"               # hot | rising | bullish | bearish | important | saved | lol
+    kind: "news"                # news | media | all
+    regions: "en"
+    items_per_request: 20
+    retry_attempts: 3
+    retry_backoff_factor: 2.0
+    timeout: 30
+
+  fear_greed:
+    base_url: "https://api.alternative.me/fng/"
+    limit: 1                    # Number of data points to fetch
+    date_format: "us"
+    retry_attempts: 3
+    retry_backoff_factor: 2.0
+    timeout: 30
+
+# =============================================================================
+# Symbols Mapping (CoinGecko ID -> Trading Pair)
+# =============================================================================
+symbols_mapping:
+  bitcoin: "BTCUSDT"
+  ethereum: "ETHUSDT"
+  solana: "SOLUSDT"
+  binancecoin: "BNBUSDT"
+
+# Reverse mapping (trading pair -> CoinGecko ID)
+symbols_reverse:
+  BTCUSDT: "bitcoin"
+  ETHUSDT: "ethereum"
+  SOLUSDT: "solana"
+  BNBUSDT: "binancecoin"
+
+# =============================================================================
+# Timeframes
+# =============================================================================
+# primary: "5m"  = valutazione ogni 5 minuti
+#           "15m" = valutazione ogni 15 minuti
+#           "1h"  = valutazione ogni ora
+#           "4h"  = valutazione ogni 4 ore
+#           "1d"  = valutazione 1 volta al giorno
+timeframes:
+  primary: "5m"    # 5m = candele ogni 5 min, segnali più frequenti
+  secondary:
+    - "15m"
+    - "4h"
+    - "1d"
+
+# CoinGecko interval mapping
+coingecko_interval_map:
+  "15m": "minutely"   # granularity auto-selected by CoinGecko based on range
+  "1h": "hourly"
+  "4h": "hourly"      # aggregated client-side
+  "1d": "daily"
+
+# =============================================================================
+# Paper Trading
+# =============================================================================
+paper_trading:
+  initial_capital: 10000.0
+  currency: "USDT"
+  simulate_slippage: true
+  simulate_fees: true
+  default_fee_rate: 0.001       # 0.1% taker fee
+  order_fill_delay_ms: 500      # Simulated order fill delay
+
+# =============================================================================
+# Strategy: HybridV1
+# =============================================================================
+strategy:
+  name: "HybridV1"
+  description: "Multi-layer hybrid strategy combining technical, volume, sentiment, and ML signals"
+
+  # Confidence thresholds (0-100 scale)
+  # Lowered for Phase 1 paper testing — raise to 65/70 for production
+  min_confidence_long: 55
+  min_confidence_short: 60
+
+  # Position limits
+  max_concurrent_positions: 3
+  max_portfolio_risk_pct: 20    # Maximum % of portfolio at risk simultaneously
+
+  # Short selling (disabled for Phase 1)
+  allow_short: false
+
+  # Layer weights (must sum to 1.0)
+  layer_weights:
+    layer1_technical: 0.30
+    layer2_volume: 0.25
+    layer3_sentiment: 0.15
+    layer4_ml: 0.30
+
+  # Signal combination method
+  combination_method: "weighted_average"  # weighted_average | voting | boosting
+
+  # Cooldown between trades on same symbol (minutes)
+  trade_cooldown_minutes: 60
+
+  # Minimum signal agreement across layers (0.0 to 1.0)
+  min_layer_agreement: 0.6
+
+  # Leverage by confidence (max 10x) — usato per simulazione
+  leverage_by_confidence:
+    - { min_conf: 55, max_conf: 60, leverage: 2 }
+    - { min_conf: 60, max_conf: 70, leverage: 5 }
+    - { min_conf: 70, max_conf: 80, leverage: 8 }
+    - { min_conf: 80, max_conf: 100, leverage: 10 }
+  max_leverage: 10
+
+# =============================================================================
+# Risk Management
+# =============================================================================
+risk:
+  # Kelly Criterion
+  kelly_fraction_multiplier: 0.5        # Half-Kelly for safety
+  kelly_min_fraction: 0.01              # Minimum 1% position size
+  kelly_max_fraction: 0.15              # Maximum 15% position size
+  kelly_rolling_window_trades: 50       # Trades used for win/loss rate calculation
+
+  # ATR-based Stop Loss
+  atr_period: 14
+  atr_stop_multiplier: 2.0             # Normal volatility stop
+  atr_high_volatility_multiplier: 3.0  # High volatility stop (wider)
+  volatility_threshold_pct: 5.0        # % threshold to classify as high volatility
+
+  # Trailing Stop
+  trailing_stop:
+    enabled: true
+    type: "atr"                         # atr | percentage
+    atr_multiplier: 1.5
+    percentage: 2.0                     # Used if type=percentage
+
+  # Time-Based Exit
+  time_exit:
+    enabled: true
+    max_hold_hours: 48
+    min_profit_to_hold_pct: 0.5         # Don't time-exit if profit > this %
+
+  # Expected Value Monitor
+  expected_value:
+    auto_pause_if_negative: true
+    rolling_window_trades: 30
+    min_trades_to_evaluate: 10          # Don't evaluate before this many trades
+
+  # Take Profit
+  take_profit:
+    enabled: true
+    risk_reward_ratio: 2.5              # TP = entry + (2.5 * risk)
+
+  # Portfolio-level guards
+  max_drawdown_pause_pct: 15.0          # Pause trading if DD exceeds this
+  daily_loss_limit_pct: 5.0            # Max daily loss before pause
+  correlation_threshold: 0.8           # Reject positions correlated above this
+
+# =============================================================================
+# Machine Learning
+# =============================================================================
+ml:
+  # Ensemble weights (must sum to 1.0)
+  ensemble_weights:
+    xgboost: 0.40
+    random_forest: 0.30
+    lstm: 0.30
+
+  # XGBoost hyperparameters
+  xgboost:
+    n_estimators: 500
+    max_depth: 6
+    learning_rate: 0.05
+    subsample: 0.8
+    colsample_bytree: 0.8
+    min_child_weight: 5
+    gamma: 0.1
+    reg_alpha: 0.1
+    reg_lambda: 1.0
+    use_label_encoder: false
+    eval_metric: "logloss"
+    early_stopping_rounds: 50
+    n_jobs: -1
+
+  # Random Forest hyperparameters
+  random_forest:
+    n_estimators: 200
+    max_depth: 10
+    min_samples_split: 10
+    min_samples_leaf: 5
+    max_features: "sqrt"
+    n_jobs: -1
+    random_state: 42
+    class_weight: "balanced"
+
+  # LSTM hyperparameters
+  lstm:
+    lookback_candles: 60
+    hidden_size: 128
+    num_layers: 2
+    dropout: 0.3
+    batch_size: 64
+    epochs: 50
+    learning_rate: 0.001
+    patience: 10                        # Early stopping patience
+    validation_split: 0.2
+
+  # Feature Engineering
+  feature_engineering:
+    target_horizon_candles: 6           # Predict return 6 candles ahead
+    target_return_threshold: 0.01       # 1% return = positive class
+    normalize_features: true
+    normalization_method: "zscore"      # zscore | minmax
+
+  # Retraining Schedule
+  retraining:
+    enabled: true
+    interval_days: 30
+    min_samples: 2000
+    retrain_on_performance_drop: true
+    performance_drop_threshold: 0.05    # Retrain if accuracy drops by 5%
+
+  # Model storage
+  model_dir: "./models"
+  save_best_only: true
+
+# =============================================================================
+# Backtesting
+# =============================================================================
+backtesting:
+  default_start: "2022-01-01"
+  default_end: "2024-01-01"
+  commission: 0.001                     # 0.1% per trade
+  slippage_std_pct: 0.0005             # 0.05% std slippage (Gaussian)
+  initial_capital: 10000.0
+
+  monte_carlo:
+    n_simulations: 1000
+    confidence_intervals: [5, 25, 50, 75, 95]
+    random_seed: 42
+
+  # Walk-forward validation
+  walk_forward:
+    enabled: true
+    in_sample_months: 12
+    out_sample_months: 3
+
+  # Output
+  results_dir: "./backtests"
+  save_trades: true
+  generate_report: true
+
+# =============================================================================
+# API Server
+# =============================================================================
+api:
+  host: "0.0.0.0"
+  port: 8000
+  reload: false
+  workers: 1
+  cors_origins:
+    - "http://localhost:3000"
+    - "http://localhost:8080"
+    - "http://127.0.0.1:3000"
+  api_prefix: "/api/v1"
+  docs_url: "/docs"
+  redoc_url: "/redoc"
+
+# =============================================================================
+# Signal Parameters
+# =============================================================================
+signals:
+  # RSI
+  rsi:
+    period: 14
+    oversold: 30
+    overbought: 70
+    extreme_oversold: 20
+    extreme_overbought: 80
+    signal_strength_oversold: 0.8       # Score when oversold
+    signal_strength_overbought: 0.8     # Score when overbought
+    signal_strength_neutral: 0.0        # Score when neutral
+
+  # MACD
+  macd:
+    fast_period: 12
+    slow_period: 26
+    signal_period: 9
+    histogram_threshold: 0.0            # Histogram value to confirm crossover
+    use_zero_crossover: true
+
+  # Bollinger Bands
+  bollinger:
+    period: 20
+    std_dev: 2.0
+    squeeze_threshold: 0.1              # BB width below this = squeeze
+    use_bandwidth: true
+
+  # EMA Crossover
+  ema_crossover:
+    fast_period: 9
+    medium_period: 21
+    slow_period: 50
+    trend_confirmation_candles: 2       # Candles crossover must hold
+
+  # Volume Anomaly
+  volume_anomaly:
+    zscore_threshold: 2.5               # Z-score above this = anomaly
+    lookback_period: 20
+    volume_confirm_price: true          # Require price move to confirm signal
+    price_move_threshold: 0.005         # 0.5% price move required
+
+  # Stochastic RSI
+  stoch_rsi:
+    rsi_period: 14
+    stoch_period: 14
+    smooth_k: 3
+    smooth_d: 3
+    oversold: 20
+    overbought: 80
+
+  # ATR (used in multiple places)
+  atr:
+    period: 14
+
+  # OBV (On-Balance Volume)
+  obv:
+    ema_period: 20                      # EMA of OBV for trend
+
+  # VWAP
+  vwap:
+    enabled: true
+    deviation_bands: [1.0, 2.0]
+
+# =============================================================================
+# Data Management
+# =============================================================================
+data:
+  cache_dir: "./data/cache"
+  cache_format: "parquet"               # parquet | csv
+  cache_expiry_hours: 1                 # Re-fetch after this many hours
+
+  historical_lookback_years: 2
+
+  # Polling intervals
+  sentiment_poll_interval_minutes: 15
+  fear_greed_poll_interval_minutes: 60
+  google_trends_poll_interval_hours: 24
+  ohlcv_poll_interval_minutes: 5
+
+  # Data quality
+  min_candles_required: 200             # Minimum candles before generating signals
+  max_gap_hours: 4                      # Alert if data gap exceeds this
+  fill_missing_method: "forward_fill"   # forward_fill | interpolate | drop
+
+  # Parquet storage
+  parquet_dir: "./data/parquet"
+  parquet_compression: "snappy"
+
+# =============================================================================
+# Scheduler
+# =============================================================================
+scheduler:
+  timezone: "UTC"
+  jobs:
+    fetch_ohlcv:
+      interval_minutes: 5
+      enabled: true
+    fetch_sentiment:
+      interval_minutes: 15
+      enabled: true
+    fetch_fear_greed:
+      interval_minutes: 60
+      enabled: true
+    run_signals:
+      interval_minutes: 5
+      enabled: true
+    retrain_ml:
+      interval_days: 30
+      enabled: true
+    snapshot_equity:
+      interval_minutes: 60
+      enabled: true
+    cleanup_cache:
+      interval_hours: 24
+      enabled: true
+
+# =============================================================================
+# Notifications (Phase 1: log-only)
+# =============================================================================
+notifications:
+  enabled: false
+  channels:
+    telegram:
+      enabled: false
+      token: ""
+      chat_id: ""
+    email:
+      enabled: false
+      smtp_host: ""
+      smtp_port: 587
+      sender: ""
+      recipient: ""
+
+# =============================================================================
+# PHASE 2 - Bybit Live Trading (Commented Out - Enable After KYC)
+# =============================================================================
+# bybit:
+#   base_url: "https://api.bybit.com"
+#   testnet_url: "https://api-testnet.bybit.com"
+#   use_testnet: true                     # Switch to false for live trading
+#   account_type: "UNIFIED"
+#   symbols:
+#     - "BTCUSDT"
+#     - "ETHUSDT"
+#     - "SOLUSDT"
+#     - "BNBUSDT"
+#   timeframes:
+#     primary: "60"                       # Bybit uses minutes: 1,3,5,15,30,60,120,240,D,W,M
+#     secondary:
+#       - "15"
+#       - "240"
+#       - "D"
+#   category: "spot"                      # spot | linear (perpetual)
+#   recv_window: 5000
+#   rate_limit_calls: 120                 # calls per minute
+#   ws_reconnect_attempts: 5
+#   ws_reconnect_delay: 5                 # seconds
+#   order_types:
+#     entry: "Market"                     # Market | Limit
+#     exit: "Market"
+#   position_mode: "MergedSingle"         # MergedSingle | BothSide (hedge mode)
